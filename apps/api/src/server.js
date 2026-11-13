@@ -28,10 +28,20 @@ function saveAssets() {
   writeFileSync(dataFile, JSON.stringify(assets, null, 2), "utf8");
 }
 
-const port = 4000;
+const port = Number(process.env.PORT || 4000);
 
+const allowedOrigins = new Set(
+  (process.env.WEB_ORIGINS || "http://localhost:5173,https://assetchain-mvp.vercel.app")
+    .split(",")
+    .map(origin => origin.trim())
+    .filter(Boolean)
+);
 const server = http.createServer(async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  const requestOrigin = req.headers.origin;
+  if (requestOrigin && allowedOrigins.has(requestOrigin)) {
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Content-Type", "application/json");
@@ -1418,7 +1428,7 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
     // Append a new version. Never overwrite previous submissions.
     asset.inspectionReports.push(report);
     asset.inspection = report;
-    asset.status = "Inspection submitted Ã¢â‚¬â€ pending review";
+    asset.status = "Inspection submitted ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â pending review";
 
     saveAssets();
 
@@ -1440,8 +1450,8 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
   send(404, { error: "Route not found" });
 });
 
-server.listen(port, "127.0.0.1", () => {
-  console.log(`AssetChain API running at http://127.0.0.1:${port}`);
+server.listen(port, "0.0.0.0", () => {
+  console.log(`AssetChain API listening on port ${port}`);
   console.log(`${assets.length} saved asset(s) loaded.`);
   startAnchoringWorker();
 });

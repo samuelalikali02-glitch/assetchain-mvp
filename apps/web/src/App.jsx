@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
 
 
-const API="http://127.0.0.1:4000/api";
+const API = (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api").replace(/\/+$/, "");
 async function apiFetch(path, options = {}) {
   const { data: { session } } = await supabase.auth.getSession();
 
@@ -23,8 +23,51 @@ const profiles={
   "Real estate":[["Indoor temperature","deg C",22,34],["Humidity","%",35,80],["Water leakage","status",0,1],["Structural tilt"," ",0,3]]
 };
 const categories=["Agriculture","Vehicle","Real estate"];
+
 const money=n=>Number(n).toLocaleString();
+
+function PasswordInput({
+ label,
+ value,
+ onChange,
+ placeholder,
+ autoComplete="current-password",
+ minLength,
+ required=true,
+ disabled=false
+}) {
+ const [visible,setVisible]=useState(false);
+
+ return (
+  <label className="password-field">
+   {label}
+   <span className="password-input-wrap">
+    <input
+     type={visible ? "text" : "password"}
+     value={value}
+     onChange={onChange}
+     placeholder={placeholder}
+     autoComplete={autoComplete}
+     minLength={minLength}
+     required={required}
+     disabled={disabled}
+    />
+    <button
+     type="button"
+     className="password-visibility"
+     onClick={()=>setVisible(current=>!current)}
+     aria-label={visible ? "Hide password" : "Show password"}
+     aria-pressed={visible}
+    >
+     {visible ? "Hide" : "Show"}
+    </button>
+   </span>
+  </label>
+ );
+}
+
 function App(){
+
  const [assets,setAssets]=useState([]);
  const [selected,setSelected]=useState(null);
  const [page,setPage]=useState("Overview");
@@ -41,6 +84,7 @@ function App(){
  const [orgPassword,setOrgPassword]=useState("");
  const [authMode,setAuthMode]=useState("login");
  const [authName,setAuthName]=useState("");
+ const [accountType,setAccountType]=useState("personal");
  const [recoveryMode,setRecoveryMode]=useState(false);
  const [newPassword,setNewPassword]=useState("");
  const [confirmPassword,setConfirmPassword]=useState("");
@@ -499,37 +543,69 @@ async function submitAuth(e){
    setNotice("");
 
    try {
+     const email = orgEmail.trim();
+
+     if (!email) {
+       throw new Error("Enter your email address.");
+     }
+
      if (authMode === "signup") {
+       if (!authName.trim()) {
+         throw new Error("Enter your full name.");
+       }
+
        if (orgPassword.length < 8) {
          throw new Error("Password must contain at least 8 characters.");
        }
 
        const {data,error}=await supabase.auth.signUp({
-         email:orgEmail.trim(),
+         email,
          password:orgPassword,
-         options:{data:{full_name:authName.trim()}}
+         options:{
+           data:{
+             full_name:authName.trim(),
+             account_type:accountType
+           }
+         }
        });
 
        if(error) throw error;
 
        if(data.session){
          setOrgSession(data.session);
-         setPage("Overview");
-         setNotice("Account created successfully.");
+         setOrgPassword("");
+
+         if(accountType === "organisation"){
+           setPage("Organisation");
+           setNotice("Your account has been created. Continue by setting up your organisation.");
+         } else {
+           setPage("Overview");
+           setNotice("Your personal account has been created successfully.");
+         }
        } else {
+         setOrgPassword("");
          setNotice("Account created. Check your email to confirm your account, then sign in.");
          setAuthMode("login");
        }
      } else {
        const {data,error}=await supabase.auth.signInWithPassword({
-         email:orgEmail.trim(),
+         email,
          password:orgPassword
        });
 
        if(error) throw error;
 
        setOrgSession(data.session);
-       setPage("Overview");
+       setOrgPassword("");
+
+       const savedAccountType = data.user?.user_metadata?.account_type;
+
+       if(savedAccountType === "organisation"){
+         setPage("Organisation");
+       } else {
+         setPage("Overview");
+       }
+
        setNotice("Welcome back.");
      }
    } catch(error) {
@@ -538,8 +614,7 @@ async function submitAuth(e){
      setOrgBusy(false);
    }
  }
-
- async function recoverPassword(){
+async function recoverPassword(){
    setNotice("");
 
    if(!orgEmail.trim()){
@@ -676,20 +751,22 @@ async function submitAuth(e){
            <h1>Reset your password</h1>
            <p className="muted">Choose a new password for your account.</p>
            <form className="form" onSubmit={saveNewPassword}>
-             <label>New password
-               <input type="password" required minLength={8}
-                 autoComplete="new-password"
-                 value={newPassword}
-                 onChange={e=>setNewPassword(e.target.value)}
-                 placeholder="At least 8 characters"/>
-             </label>
-             <label>Confirm new password
-               <input type="password" required minLength={8}
-                 autoComplete="new-password"
-                 value={confirmPassword}
-                 onChange={e=>setConfirmPassword(e.target.value)}
-                 placeholder="Enter the new password again"/>
-             </label>
+            <PasswordInput
+ label="New password"
+ value={profilePassword}
+ onChange={e=>setProfilePassword(e.target.value)}
+ minLength={8}
+ autoComplete="new-password"
+ placeholder="At least 8 characters"
+/>
+            <PasswordInput
+ label="Confirm new password"
+ value={profilePasswordConfirm}
+ onChange={e=>setProfilePasswordConfirm(e.target.value)}
+ minLength={8}
+ autoComplete="new-password"
+ placeholder="Enter the password again"
+/>
              <button type="submit" disabled={orgBusy}>
                {orgBusy ? "Saving..." : "Save new password"}
              </button>
@@ -702,72 +779,175 @@ async function submitAuth(e){
  }
 if(!orgSession){
    return (
-     <div className="shell">
-       <main className="main" style={{maxWidth:"520px",width:"100%",margin:"auto"}}>
-         <section className="panel" style={{marginTop:"10vh",padding:"28px"}}>
-           <p className="eyebrow">ASSETCHAIN   SECURE ACCESS</p>
-           <h1>{authMode==="signup" ? "Create your account" : "Welcome back"}</h1>
-           <p className="muted">
-             {authMode==="signup"
-               ? "Register an individual account to access AssetChain."
-               : "Sign in to access your asset records and organisation workspace."}
-           </p>
-
-           <div style={{display:"flex",gap:"10px",margin:"20px 0"}}>
-             <button type="button" onClick={()=>setAuthMode("login")}>
-               Sign in
-             </button>
-             <button type="button" onClick={()=>setAuthMode("signup")}>
-               Create account
-             </button>
+     <div className="ac-auth-shell">
+       <main className="ac-auth-layout">
+         <section className="ac-auth-intro">
+           <div className="ac-auth-brand">
+             <span className="ac-auth-mark">A</span>
+             <span>AssetChain</span>
            </div>
 
-           <form className="form" onSubmit={submitAuth}>
+           <div className="ac-auth-intro-content">
+             <p className="ac-auth-kicker">ASSET MANAGEMENT. BUILT ON TRUST.</p>
+             <h1>Know your assets. Verify their history.</h1>
+             <p>
+               A secure workspace for recording, tracking and verifying
+               asset information with confidence.
+             </p>
+           </div>
+
+           <div className="ac-auth-intro-footer">
+             Secure access to your asset records and organisation workspace.
+           </div>
+         </section>
+
+         <section className="ac-auth-panel">
+           <div className="ac-auth-form-wrap">
+             <p className="ac-auth-eyebrow">ASSETCHAIN SECURE ACCESS</p>
+
+             <div className="ac-auth-heading">
+               <h2>{authMode==="signup" ? "Create your account" : "Welcome back"}</h2>
+               <p>
+                 {authMode==="signup"
+                   ? "Choose the account that best describes how you will use AssetChain."
+                   : "Sign in to continue to your AssetChain workspace."}
+               </p>
+             </div>
+
+             <div className="ac-auth-tabs" role="group" aria-label="Authentication mode">
+               <button
+                 type="button"
+                 className={authMode==="login" ? "active" : ""}
+                 onClick={()=>setAuthMode("login")}
+                 aria-pressed={authMode==="login"}
+               >
+                 Sign in
+               </button>
+               <button
+                 type="button"
+                 className={authMode==="signup" ? "active" : ""}
+                 onClick={()=>setAuthMode("signup")}
+                 aria-pressed={authMode==="signup"}
+               >
+                 Create account
+               </button>
+             </div>
+
              {authMode==="signup" && (
-               <label>Full name
-                 <input required value={authName}
-                   onChange={e=>setAuthName(e.target.value)}
-                   placeholder="Your full name"/>
-               </label>
+               <div className="ac-account-choice">
+                 <p className="ac-auth-label">Choose account type</p>
+
+                 <div className="ac-account-grid">
+                   <button
+                     type="button"
+                     className={`ac-account-option ${accountType==="personal" ? "selected" : ""}`}
+                     onClick={()=>setAccountType("personal")}
+                     aria-pressed={accountType==="personal"}
+                   >
+                     <span className="ac-account-icon" aria-hidden="true">â—Ž</span>
+                     <strong>Personal account</strong>
+                     <span>Manage and track your personal asset records.</span>
+                     <span className="ac-account-selected">
+                       {accountType==="personal" ? "Selected" : "Choose personal"}
+                     </span>
+                   </button>
+
+                   <button
+                     type="button"
+                     className={`ac-account-option ${accountType==="organisation" ? "selected" : ""}`}
+                     onClick={()=>setAccountType("organisation")}
+                     aria-pressed={accountType==="organisation"}
+                   >
+                     <span className="ac-account-icon" aria-hidden="true">â–¦</span>
+                     <strong>Organisation account</strong>
+                     <span>Create an account to set up or join an organisation workspace.</span>
+                     <span className="ac-account-selected">
+                       {accountType==="organisation" ? "Selected" : "Choose organisation"}
+                     </span>
+                   </button>
+                 </div>
+
+                 {accountType==="organisation" && (
+                   <p className="ac-account-note">
+                     First, create your secure login. You can then set up your
+                     organisation through the organisation workspace.
+                   </p>
+                 )}
+               </div>
              )}
 
-             <label>Email address
-               <input type="email" required value={orgEmail}
-                 onChange={e=>setOrgEmail(e.target.value)}
-                 placeholder="you@example.com"/>
-             </label>
+             <form className="form ac-auth-form" onSubmit={submitAuth}>
+               {authMode==="signup" && (
+                 <label>
+                   Full name
+                   <input
+                     required
+                     value={authName}
+                     onChange={e=>setAuthName(e.target.value)}
+                     placeholder="Enter your full name"
+                     autoComplete="name"
+                   />
+                 </label>
+               )}
 
-             <label>Password
-               <input type="password" required value={orgPassword}
+               <label>
+                 Email address
+                 <input
+                   type="email"
+                   required
+                   value={orgEmail}
+                   onChange={e=>setOrgEmail(e.target.value)}
+                   placeholder="you@example.com"
+                   autoComplete="email"
+                 />
+               </label>
+
+               <PasswordInput
+                 label="Password"
+                 value={orgPassword}
                  onChange={e=>setOrgPassword(e.target.value)}
                  minLength={authMode==="signup" ? 8 : undefined}
-                 placeholder={authMode==="signup" ? "At least 8 characters" : "Your password"}/>
-             </label>
+                 placeholder={authMode==="signup" ? "At least 8 characters" : "Your password"}
+                 autoComplete={authMode==="signup" ? "new-password" : "current-password"}
+               />
 
-             {authMode==="login" && (
-               <button type="button" onClick={recoverPassword}
-                 disabled={orgBusy}
-                 style={{background:"transparent",border:"none",textDecoration:"underline",cursor:"pointer"}}>
-                 Forgot password?
+               {authMode==="login" && (
+                 <div className="ac-auth-forgot">
+                   <button
+                     type="button"
+                     onClick={recoverPassword}
+                     disabled={orgBusy}
+                   >
+                     Forgot password?
+                   </button>
+                 </div>
+               )}
+
+               <button className="ac-auth-submit" type="submit" disabled={orgBusy}>
+                 {orgBusy
+                   ? "Please wait..."
+                   : authMode==="signup"
+                     ? "Create account"
+                     : "Sign in"}
                </button>
+             </form>
+
+             {notice && (
+               <p className="ac-auth-notice" role="status" aria-live="polite">
+                 {notice}
+               </p>
              )}
 
-             <button type="submit" disabled={orgBusy}>
-               {orgBusy ? "Please wait..." : authMode==="signup" ? "Create account" : "Sign in"}
-             </button>
-           </form>
-
-           {notice && <p role="status" style={{marginTop:"16px"}}>{notice}</p>}
-
-           <p className="muted" style={{fontSize:"12px",marginTop:"20px"}}>
-             Keep your account credentials private. Only provide information necessary for your asset records.
-           </p>
+             <p className="ac-auth-security">
+               Keep your login credentials private. Only provide information
+               necessary for your asset records.
+             </p>
+           </div>
          </section>
        </main>
      </div>
    );
- }
- const card=(label,value,sub)=><div className="stat"><span>{label}</span><strong>{value}</strong><small>{sub}</small></div>;
+ } const card=(label,value,sub)=><div className="stat"><span>{label}</span><strong>{value}</strong><small>{sub}</small></div>;
  return <div className="shell">
   <aside className="sidebar">
    <div className="brand"><div className="brandmark">A</div><div>AssetChain<small>TRUST INFRASTRUCTURE</small></div></div>
@@ -911,9 +1091,13 @@ if(!orgSession){
       <label>Email address
        <input type="email" required value={orgEmail} onChange={e=>setOrgEmail(e.target.value)} placeholder="you@example.com"/>
       </label>
-      <label>Password
-       <input type="password" required value={orgPassword} onChange={e=>setOrgPassword(e.target.value)} placeholder="Your account password"/>
-      </label>
+     <PasswordInput
+ label="Password"
+ value={orgPassword}
+ onChange={e=>setOrgPassword(e.target.value)}
+ placeholder="Your account password"
+ autoComplete="current-password"
+/>
       <button className="primary" disabled={orgBusy}>{orgBusy?"Signing in...":"Sign in"}</button>
      </form>
     </div>}
@@ -1059,12 +1243,22 @@ if(!orgSession){
        </div>
        <form className="form" onSubmit={changeProfilePassword}>
         <h3>Change password</h3>
-        <label>New password
-         <input type="password" minLength={8} autoComplete="new-password" value={profilePassword} onChange={e=>setProfilePassword(e.target.value)} required placeholder="At least 8 characters"/>
-        </label>
-        <label>Confirm new password
-         <input type="password" minLength={8} autoComplete="new-password" value={profilePasswordConfirm} onChange={e=>setProfilePasswordConfirm(e.target.value)} required placeholder="Enter the password again"/>
-        </label>
+       <PasswordInput
+ label="New password"
+ value={newPassword}
+ onChange={e=>setNewPassword(e.target.value)}
+ minLength={8}
+ autoComplete="new-password"
+ placeholder="At least 8 characters"
+/>
+       <PasswordInput
+ label="Confirm new password"
+ value={confirmPassword}
+ onChange={e=>setConfirmPassword(e.target.value)}
+ minLength={8}
+ autoComplete="new-password"
+ placeholder="Enter the new password again"
+/>
         <button className="primary" disabled={profileBusy}>Update password</button>
        </form>
        <p className="muted">Two-factor authentication and session/device management are not enabled in this MVP.</p>
