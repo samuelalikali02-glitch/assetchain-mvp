@@ -1,0 +1,39 @@
+﻿node_modules/
+dist/
+.env
+coverage/
+artifacts/
+cache/
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules/
+**/dist/
+**/data/uploads/
+
+# Local and sensitive files
+.env*
+**/.env*
+!**/.env.example
+!**/.env.example.*
+upload-test.txt
+backup-before-*/
+**/data/uploads/
+*.log
+
+# Temporary files, editor backups and historical snapshots
+*.bak
+*.backup
+*.before-*
+*.tmp
+*.encoding-*
+*.log
+
+# Local runtime data (do not publish user/test records)
+apps/api/data/*.json
+apps/api/data/*.tmp
+
+*.backup-*
+*.bak*
+*.before-*
+*.encoding-*

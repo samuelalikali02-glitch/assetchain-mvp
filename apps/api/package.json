@@ -1,0 +1,14 @@
+{
+    "name": "@assetchain/api",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "node --env-file=.env --watch src/server.js"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.119.0",
+        "busboy": "^1.6.0",
+        "ethers": "^6.17.0"
+    }
+}
