@@ -154,6 +154,7 @@ Create a `.env` file inside `apps/web/`.
 ```env
 VITE_SUPABASE_URL=your_supabase_project_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_API_BASE_URL=https://your-backend-domain/api
 ```
 
 ### 4. Configure the backend
@@ -169,6 +170,18 @@ PLATFORM_PRIVATE_KEY=your_platform_wallet_private_key
 ASSETCHAIN_CONTRACT_ADDRESS=your_deployed_contract_address
 
 INSPECTOR_EMAIL=your_inspector_email
+
+# Optional backend role accounts
+OWNER_EMAIL=your_owner_email
+OWNER_PASSWORD=your_owner_password
+ADMIN_EMAIL=your_admin_email
+ADMIN_PASSWORD=your_admin_password
+INSPECTOR_PASSWORD=your_inspector_password
+USER_EMAIL=your_user_email
+USER_PASSWORD=your_user_password
+
+# Optional comma-separated frontend origins
+WEB_ORIGINS=http://localhost:5173,https://your-frontend-domain
 ```
 
 **Security warning:** Never publish `.env` files, private keys, Supabase service-role keys or other credentials. Keep privileged credentials exclusively on the server.
