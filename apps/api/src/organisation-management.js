@@ -70,25 +70,6 @@ async function findRegisteredUser(email) {
 }
 
 export async function handleOrganisationManagement(req, res, body) {
-  if (body === undefined && ["POST", "PATCH"].includes(req.method.toUpperCase())) {
-    const chunks = [];
-    let total = 0;
-    for await (const chunk of req) {
-      total += chunk.length;
-      if (total > 1048576) {
-        reply(res, 413, { error: "Request body is too large." });
-        return true;
-      }
-      chunks.push(chunk);
-    }
-    try {
-      body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
-    } catch {
-      reply(res, 400, { error: "Invalid JSON request body." });
-      return true;
-    }
-  }
-  body = body || {};
   const url = new URL(req.url, "http://localhost");
   const path = url.pathname.replace(/\/+$/, "");
   const method = req.method.toUpperCase();
@@ -97,7 +78,36 @@ export async function handleOrganisationManagement(req, res, body) {
   const membersMatch = path.match(/^\/api\/organisations\/([^/]+)\/members$/);
   const memberMatch = path.match(/^\/api\/organisations\/([^/]+)\/members\/([^/]+)$/);
 
+  // Do not consume request bodies belonging to other API routes.
   if (!profileMatch && !membersMatch && !memberMatch) return false;
+
+  if (body === undefined && ["POST", "PATCH"].includes(method)) {
+    const chunks = [];
+    let total = 0;
+
+    for await (const chunk of req) {
+      total += chunk.length;
+
+      if (total > 1048576) {
+        reply(res, 413, { error: "Request body is too large." });
+        return true;
+      }
+
+      chunks.push(chunk);
+    }
+
+    try {
+      body = chunks.length
+        ? JSON.parse(Buffer.concat(chunks).toString("utf8"))
+        : {};
+    } catch {
+      reply(res, 400, { error: "Invalid JSON request body." });
+      return true;
+    }
+  }
+
+  body = body || {};
+
 
   try {
     const user = await getUser(req);

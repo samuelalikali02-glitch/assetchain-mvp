@@ -1,3 +1,4 @@
+
 import {
   JsonRpcProvider,
   Wallet,
@@ -19,22 +20,31 @@ import {
   renameSync
 } from "node:fs";
 
+import { supabase } from "./supabase.js";
+
 const dataDir = new URL("../data/", import.meta.url);
 const queuePath = new URL("../data/blockchain-events.json", import.meta.url);
 const tempPath = new URL("../data/blockchain-events.tmp", import.meta.url);
 
 mkdirSync(dataDir, { recursive: true });
 
+// Blockchain configuration
 const rpcUrl = process.env.SEPOLIA_RPC_URL;
 const privateKey = process.env.PLATFORM_PRIVATE_KEY;
 const contractAddress = process.env.ASSETCHAIN_CONTRACT_ADDRESS;
 
-if (!rpcUrl || !privateKey || !contractAddress) {
-  throw new Error("Missing blockchain environment configuration.");
-}
+const blockchainConfigured = Boolean(
+  rpcUrl && privateKey && contractAddress
+);
 
-const provider = new JsonRpcProvider(rpcUrl);
-const wallet = new Wallet(privateKey, provider);
+// Initialize blockchain connections only when fully configured.
+const provider = blockchainConfigured
+  ? new JsonRpcProvider(rpcUrl)
+  : null;
+
+const wallet = blockchainConfigured
+  ? new Wallet(privateKey, provider)
+  : null;
 
 const abi = [
   "function anchorEvidence(bytes32 passportKey, bytes32 evidenceHash, bytes32 evidenceType) external returns (uint256 version)",
@@ -60,22 +70,73 @@ const abi = [
   }
 ];
 
-const contract = new Contract(contractAddress, abi, wallet);
+const contract = blockchainConfigured
+  ? new Contract(contractAddress, abi, wallet)
+  : null;
 
+// Load existing anchoring queue.
 let events = [];
 
 try {
   events = JSON.parse(readFileSync(queuePath, "utf8"));
-  if (!Array.isArray(events)) events = [];
+
+  if (!Array.isArray(events)) {
+    events = [];
+  }
 } catch {
   events = [];
 }
 
+// Save queue using a temporary file to reduce partial-write risk.
 function saveQueue() {
   writeFileSync(tempPath, JSON.stringify(events, null, 2), "utf8");
   renameSync(tempPath, queuePath);
 }
 
+// Synchronise a confirmed asset registration with Supabase.
+async function syncConfirmedRegistrationToSupabase(event) {
+  if (event.eventType !== "ASSET_REGISTERED") return;
+
+  if (!event.transactionHash) {
+    throw new Error(
+      `Cannot synchronise ${event.passportId}: transaction hash is missing.`
+    );
+  }
+
+  if (event.databaseSynced === true) return;
+
+  const { data, error } = await supabase
+    .from("asset_records")
+    .update({
+      blockchain_tx: event.transactionHash,
+      blockchain_network: "ethereum-sepolia"
+    })
+    .eq("passport_id", event.passportId)
+    .select("id");
+
+  if (error) {
+    throw new Error(`Supabase registration sync failed: ${error.message}`);
+  }
+
+  if (!data || data.length !== 1) {
+    throw new Error(
+      `Expected one asset record for ${event.passportId}, but updated ${data?.length ?? 0}.`
+    );
+  }
+
+  event.databaseSynced = true;
+  event.databaseSyncedAt = new Date().toISOString();
+  event.databaseSyncError = null;
+  event.lastError = null;
+
+  saveQueue();
+
+  console.log(
+    `Supabase registration synchronised for ${event.passportId}: ${event.transactionHash}`
+  );
+}
+
+// Add a critical event to the local anchoring queue.
 export function enqueueCriticalEvent({
   passportId,
   eventType,
@@ -86,6 +147,7 @@ export function enqueueCriticalEvent({
   }
 
   const occurredAt = new Date().toISOString();
+
   const dataHash = createHash("sha256")
     .update(JSON.stringify(data ?? {}))
     .digest("hex");
@@ -117,6 +179,7 @@ export function enqueueCriticalEvent({
   return event;
 }
 
+// Check whether an event has already been anchored on-chain.
 async function alreadyAnchored(event) {
   const passportKey = keccak256(toUtf8Bytes(event.passportId));
   const evidenceHash = "0x" + event.eventHash;
@@ -138,10 +201,19 @@ async function alreadyAnchored(event) {
   return false;
 }
 
+// Process one queued event.
 async function processEvent(event) {
   try {
+    // Never submit a second transaction for an already-confirmed event.
+    if (event.status === "confirmed") {
+      await syncConfirmedRegistrationToSupabase(event);
+      return;
+    }
+
     if (event.status === "submitted" && event.transactionHash) {
-      const receipt = await provider.getTransactionReceipt(event.transactionHash);
+      const receipt = await provider.getTransactionReceipt(
+        event.transactionHash
+      );
 
       if (!receipt) return;
 
@@ -149,13 +221,16 @@ async function processEvent(event) {
         event.status = "confirmed";
         event.blockNumber = receipt.blockNumber;
         event.lastError = null;
+        saveQueue();
+
+        await syncConfirmedRegistrationToSupabase(event);
       } else {
         event.status = "pending";
         event.transactionHash = null;
         event.lastError = "Previous transaction reverted.";
+        saveQueue();
       }
 
-      saveQueue();
       return;
     }
 
@@ -196,12 +271,21 @@ async function processEvent(event) {
     event.blockNumber = receipt.blockNumber;
     saveQueue();
 
+    await syncConfirmedRegistrationToSupabase(event);
+
     console.log(
       `Anchored ${event.eventType} for ${event.passportId}: ${tx.hash}`
     );
   } catch (error) {
-    event.status = event.transactionHash ? "submitted" : "pending";
+    // Do not downgrade a transaction that is already confirmed on-chain.
+    if (event.status !== "confirmed") {
+      event.status = event.transactionHash ? "submitted" : "pending";
+    } else {
+      event.databaseSyncError = String(error.message || error).slice(0, 500);
+    }
+
     event.lastError = String(error.message || error).slice(0, 500);
+
     saveQueue();
 
     console.error(
@@ -213,8 +297,17 @@ async function processEvent(event) {
 
 let workerRunning = false;
 
+// Start the blockchain worker only when configuration is available.
 export function startAnchoringWorker() {
   if (workerRunning) return;
+
+  if (!blockchainConfigured) {
+    console.warn(
+      "Blockchain anchoring is disabled: blockchain environment configuration is incomplete."
+    );
+    return;
+  }
+
   workerRunning = true;
 
   console.log("Blockchain anchoring worker started.");
@@ -222,7 +315,15 @@ export function startAnchoringWorker() {
 
   const processQueue = async () => {
     for (const event of events) {
-      if (event.status === "pending" || event.status === "submitted") {
+      if (
+        event.status === "pending" ||
+        event.status === "submitted" ||
+        (
+          event.status === "confirmed" &&
+          event.eventType === "ASSET_REGISTERED" &&
+          event.databaseSynced !== true
+        )
+      ) {
         await processEvent(event);
       }
     }
@@ -239,6 +340,7 @@ export function startAnchoringWorker() {
   }, 10000);
 }
 
+// Retrieve anchoring events.
 export function getAnchoringEvents(passportId) {
   return events
     .filter(event => !passportId || event.passportId === passportId)
