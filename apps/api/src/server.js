@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 import { enqueueCriticalEvent, startAnchoringWorker, getAnchoringEvents } from "./anchoring.js";
 import { login, authenticate, logout, hasRole } from "./auth.js";
 import { supabase } from "./supabase.js";
+import { handleOrganisationManagement } from "./organisation-management.js";
+import { handleOrganisationDocuments } from "./organisation-documents.js";
+import { handleValidatedOrganisationDocument } from "./organisation-document-validation.js";
+import { handleOrganisationVerificationReview } from "./organisation-verification-review.js";
+import { handleOrganisationVerificationHistory } from "./organisation-verification-history.js";
 import {
   receiveUploads,
   attachUploads,
@@ -28,10 +33,109 @@ function saveAssets() {
   writeFileSync(dataFile, JSON.stringify(assets, null, 2), "utf8");
 }
 
+async function hasActiveOrganisationMembership(organisationId, userId) {
+  if (!organisationId || !userId) return false;
+
+  const { data, error } = await supabase
+    .from("organisation_members")
+    .select("organisation_id")
+    .eq("organisation_id", organisationId)
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .maybeSingle();
+
+  if (error) {
+    console.error("Organisation membership check failed:", error.message);
+    return false;
+  }
+
+  return Boolean(data);
+}
+/* Supabase-backed asset passport persistence. */
+function mapAssetRecord(row) {
+  const appData =
+    row.app_data && typeof row.app_data === "object"
+      ? row.app_data
+      : {};
+
+  return {
+    ...appData,
+    id: row.id,
+    passportId: row.passport_id,
+    name: row.name,
+    category: row.category,
+    description: row.description || "",
+    location: row.location || "",
+    ownerId: row.organisation_id
+      ? null
+      : (appData.ownerId || row.owner_user_id || null),
+    organisationId: row.organisation_id || null,
+    recordHash: row.record_hash || appData.recordHash || null,
+    createdAt: appData.createdAt || row.created_at
+  };
+}
+
+async function loadAssetRecords() {
+  const records = [];
+  const pageSize = 500;
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("asset_records")
+      .select("*")
+      .order("created_at", { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (error) throw error;
+
+    records.push(...(data || []));
+
+    if (!data || data.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return records.map(mapAssetRecord);
+}
+
+async function loadAssetRecordById(id) {
+  const { data, error } = await supabase
+    .from("asset_records")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data ? mapAssetRecord(data) : null;
+}
+
+async function saveAssetRecord(asset) {
+  const { data, error } = await supabase
+    .from("asset_records")
+    .update({
+      name: asset.name,
+      category: asset.category,
+      description: asset.description || "",
+      location: asset.location || "",
+      owner_user_id: asset.organisationId ? null : asset.ownerId,
+      organisation_id: asset.organisationId || null,
+      record_hash: asset.recordHash || null,
+      app_data: asset
+    })
+    .eq("id", asset.id)
+    .select("id")
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) throw new Error("Asset record not found.");
+
+  return asset;
+}
+
 const port = Number(process.env.PORT || 4000);
 
 const allowedOrigins = new Set(
-  (process.env.WEB_ORIGINS || "http://localhost:5173,https://assetchain-mvp.vercel.app")
+  (process.env.WEB_ORIGINS || "http://localhost:5173,http://localhost:5174,https://assetchain-mvp.vercel.app")
     .split(",")
     .map(origin => origin.trim())
     .filter(Boolean)
@@ -51,6 +155,11 @@ const server = http.createServer(async (req, res) => {
     return res.end();
   }
 
+  if (await handleOrganisationVerificationHistory(req, res)) return;
+  if (await handleOrganisationVerificationReview(req, res)) return;
+  if (await handleValidatedOrganisationDocument(req, res)) return;
+  if (await handleOrganisationDocuments(req, res)) return;
+  if (await handleOrganisationManagement(req, res)) return;
  let body = {};
 
 const contentType = req.headers["content-type"] || "";
@@ -761,8 +870,35 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
       }
 
       const { data, error } = await query;
-      if (error) return send(500, { error: "Could not load inspection assignments" });
-      return send(200, data || []);
+if (error) return send(500, { error: "Could not load inspection assignments" });
+
+const assignments = data || [];
+const assetIds = [...new Set(assignments.map(item => item.asset_id).filter(Boolean))];
+
+let assetMap = {};
+
+if (assetIds.length) {
+  const { data: assetRows, error: assetError } = await supabase
+    .from("asset_records")
+    .select("id, passport_id, name, category, location, description")
+    .in("id", assetIds);
+
+  if (assetError) {
+    return send(500, { error: "Could not load assigned asset details" });
+  }
+
+  assetMap = Object.fromEntries(
+    (assetRows || []).map(asset => [asset.id, asset])
+  );
+}
+
+return send(
+  200,
+  assignments.map(item => ({
+    ...item,
+    asset: assetMap[item.asset_id] || null
+  }))
+);
     }
 
     if (pathname === "/api/platform/inspections" && req.method === "POST") {
@@ -827,6 +963,239 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
       return send(201, { ...data, asset, auditRecorded: audited });
     }
 
+// Submit an inspection report for an assigned asset.
+const reportSubmissionMatch = pathname.match(
+  /^\/api\/platform\/inspections\/([^/]+)\/report$/
+);
+
+if (reportSubmissionMatch && req.method === "POST") {
+  if (user.role !== "platform_inspector") {
+    return send(403, { error: "Only platform inspectors can submit reports" });
+  }
+
+  const assignmentId = reportSubmissionMatch[1];
+
+  const { data: assignment, error: assignmentError } = await supabase
+    .from("platform_inspection_assignments")
+    .select("id, inspector_user_id, status")
+    .eq("id", assignmentId)
+    .maybeSingle();
+
+  if (assignmentError) return send(500, { error: "Could not verify assignment" });
+  if (!assignment || assignment.inspector_user_id !== user.id) {
+    return send(404, { error: "Your inspection assignment was not found" });
+  }
+
+if (assignment.status !== "in_progress") {
+    return send(409, { error: "Start the inspection before submitting a report" });
+  }
+
+  const allowedConditions = ["excellent", "good", "fair", "poor", "critical"];
+  const condition = String(body.assetCondition || "");
+  const findings = String(body.findings || "").trim();
+  const recommendations = String(body.recommendations || "").trim();
+  const notes = String(body.inspectionNotes || "").trim();
+
+  if (!allowedConditions.includes(condition)) {
+    return send(400, { error: "Select a valid asset condition" });
+  }
+
+  if (findings.length < 10 || findings.length > 10000) {
+    return send(400, { error: "Findings must contain 10 to 10000 characters" });
+  }
+
+  if (recommendations.length > 5000 || notes.length > 5000) {
+    return send(400, { error: "Recommendations and notes must not exceed 5000 characters each" });
+  }
+
+  const { data: previous, error: previousError } = await supabase
+    .from("platform_inspection_reports")
+    .select("version")
+    .eq("assignment_id", assignmentId)
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (previousError) return send(500, { error: "Could not check report history" });
+
+  const version = (previous?.version || 0) + 1;
+
+  const canonicalReport = JSON.stringify({
+    assignmentId,
+    inspectorUserId: user.id,
+    version,
+    condition,
+    findings,
+    recommendations,
+    notes
+  });
+
+  const reportHash = createHash("sha256")
+    .update(canonicalReport, "utf8")
+    .digest("hex");
+
+  const { data: report, error: reportError } = await supabase
+    .from("platform_inspection_reports")
+    .insert({
+      assignment_id: assignmentId,
+      inspector_user_id: user.id,
+      version,
+      asset_condition: condition,
+      findings,
+      recommendations: recommendations || null,
+      inspection_notes: notes || null,
+      report_hash: reportHash
+    })
+    .select()
+    .single();
+
+  if (reportError) {
+    console.error("Inspection report submission failed:", reportError.message);
+    return send(500, { error: "Could not save inspection report" });
+  }
+
+  const { error: statusError } = await supabase
+    .from("platform_inspection_assignments")
+    .update({
+      status: "submitted",
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", assignmentId)
+    .eq("inspector_user_id", user.id);
+
+  if (statusError) {
+    console.error("Inspection status update failed:", statusError.message);
+    return send(500, {
+      error: "Report saved, but assignment status update failed",
+      reportId: report.id
+    });
+  }
+
+  const audited = await recordPlatformAudit(
+    "INSPECTION_REPORT_SUBMITTED",
+    user.id,
+    {
+      assignmentId,
+      reportId: report.id,
+      version,
+      reportHash
+    }
+  );
+
+  return send(201, { report, auditRecorded: audited });
+}
+
+// Retrieve reports belonging to an assignment.
+const reportListMatch = pathname.match(
+  /^\/api\/platform\/inspections\/([^/]+)\/reports$/
+);
+
+if (reportListMatch && req.method === "GET") {
+  const assignmentId = reportListMatch[1];
+
+  const { data: assignment, error: assignmentError } = await supabase
+    .from("platform_inspection_assignments")
+    .select("id, inspector_user_id")
+    .eq("id", assignmentId)
+    .maybeSingle();
+
+  if (assignmentError) return send(500, { error: "Could not verify assignment" });
+  if (!assignment) return send(404, { error: "Assignment not found" });
+
+  const authorised =
+    isPlatformAdmin ||
+    (user.role === "platform_inspector" && assignment.inspector_user_id === user.id);
+
+  if (!authorised) return send(403, { error: "Report access denied" });
+
+  const { data, error } = await supabase
+    .from("platform_inspection_reports")
+    .select("*")
+    .eq("assignment_id", assignmentId)
+    .order("version", { ascending: false });
+
+  if (error) return send(500, { error: "Could not load inspection reports" });
+
+  return send(200, data || []);
+}
+
+// Record an administrator's decision without changing the submitted report.
+const reportReviewMatch = pathname.match(
+  /^\/api\/platform\/inspection-reports\/([^/]+)\/reviews$/
+);
+
+if (reportReviewMatch && req.method === "POST") {
+  if (!isPlatformAdmin) {
+    return send(403, { error: "Platform administrator access required" });
+  }
+
+  const reportId = reportReviewMatch[1];
+  const decision = String(body.decision || "");
+  const reviewNotes = String(body.reviewNotes || "").trim();
+
+  if (!["approved", "rejected", "revision_required"].includes(decision)) {
+    return send(400, { error: "Select a valid review decision" });
+  }
+
+  if (reviewNotes.length > 5000) {
+    return send(400, { error: "Review notes must not exceed 5000 characters" });
+  }
+
+  const { data: report, error: reportError } = await supabase
+    .from("platform_inspection_reports")
+    .select("id, assignment_id, inspector_user_id")
+    .eq("id", reportId)
+    .maybeSingle();
+
+  if (reportError) return send(500, { error: "Could not load inspection report" });
+  if (!report) return send(404, { error: "Inspection report not found" });
+
+  const { data: review, error: reviewError } = await supabase
+    .from("platform_inspection_report_reviews")
+    .insert({
+      report_id: reportId,
+      reviewer_user_id: user.id,
+      decision,
+      review_notes: reviewNotes || null
+    })
+    .select()
+    .single();
+
+  if (reviewError) return send(500, { error: "Could not save report review" });
+
+  const nextStatus = decision === "revision_required"
+    ? "in_progress"
+    : "reviewed";
+
+  const { error: statusError } = await supabase
+    .from("platform_inspection_assignments")
+    .update({
+      status: nextStatus,
+      updated_at: new Date().toISOString()
+    })
+    .eq("id", report.assignment_id);
+
+  if (statusError) {
+    console.error("Report review status update failed:", statusError.message);
+    return send(500, {
+      error: "Review was saved, but assignment status update failed",
+      reviewId: review.id
+    });
+  }
+
+  const audited = await recordPlatformAudit(
+    "INSPECTION_REPORT_REVIEWED",
+    report.inspector_user_id,
+    {
+      reportId,
+      reviewId: review.id,
+      decision
+    }
+  );
+
+  return send(201, { review, auditRecorded: audited });
+}
+
     const inspectionMatch = pathname.match(/^\/api\/platform\/inspections\/([^/]+)$/);
     if (inspectionMatch && req.method === "PATCH") {
       const assignmentId = inspectionMatch[1];
@@ -841,7 +1210,7 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
 
       const inspectorUpdate = user.role === "platform_inspector" &&
         assignment.inspector_user_id === user.id &&
-        ["in_progress", "submitted"].includes(body.status);
+        ["in_progress"].includes(body.status);
 
       const adminUpdate = isPlatformAdmin &&
         ["reviewed", "cancelled"].includes(body.status);
@@ -1114,7 +1483,24 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
     }
 
     if (user.role === "user") {
-      return send(200, assets.filter(a => a.ownerId === user.id));
+      const { data: memberships, error: membershipError } = await supabase
+        .from("organisation_members")
+        .select("organisation_id")
+        .eq("user_id", user.id)
+        .eq("status", "active");
+
+      if (membershipError) {
+        return send(503, { error: "Could not verify organisation access" });
+      }
+
+      const organisationIds = new Set(
+        (memberships || []).map(item => item.organisation_id)
+      );
+
+      return send(200, assets.filter(asset =>
+        (!asset.organisationId && asset.ownerId === user.id) ||
+        (asset.organisationId && organisationIds.has(asset.organisationId))
+      ));
     }
 
     if (!hasRole(user, ["owner", "admin"])) {
@@ -1133,9 +1519,16 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
     const requestUrl = new URL(req.url, "http://127.0.0.1:4000");
     const passportId = requestUrl.searchParams.get("passportId");
 
-    if (user.role === "user" &&
-        !assets.some(a => a.passportId === passportId && a.ownerId === user.id)) {
-      return send(403, { error: "Access denied" });
+    if (user.role === "user") {
+      const asset = assets.find(item => item.passportId === passportId);
+
+      if (!asset) return send(403, { error: "Access denied" });
+
+      const authorised = asset.organisationId
+        ? await hasActiveOrganisationMembership(asset.organisationId, user.id)
+        : asset.ownerId === user.id;
+
+      if (!authorised) return send(403, { error: "Access denied" });
     }
 
     return send(200, getAnchoringEvents(passportId || undefined));
@@ -1262,6 +1655,7 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
     }
 
     asset.organisationId = organisationId;
+    asset.ownerId = organisationId ? null : user.id;
 
     const { error: recordError } = await supabase
       .from("asset_records")
@@ -1317,9 +1711,14 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
       return send(404, { error: "Associated asset not found" });
     }
 
+    const organisationAccess = asset.organisationId
+      ? await hasActiveOrganisationMembership(asset.organisationId, user.id)
+      : false;
+
     const authorized =
       hasRole(user, ["owner", "admin"]) ||
-      asset.ownerId === user.id ||
+      (!asset.organisationId && asset.ownerId === user.id) ||
+      organisationAccess ||
       (user.role === "inspector" && asset.inspector?.id === user.id);
 
     if (!authorized) {
@@ -1428,7 +1827,7 @@ if (!contentType.toLowerCase().includes("multipart/form-data")) {
     // Append a new version. Never overwrite previous submissions.
     asset.inspectionReports.push(report);
     asset.inspection = report;
-    asset.status = "Inspection submitted ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â pending review";
+    asset.status = "Inspection submitted ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â pending review";
 
     saveAssets();
 
@@ -1455,5 +1854,12 @@ server.listen(port, "0.0.0.0", () => {
   console.log(`${assets.length} saved asset(s) loaded.`);
   startAnchoringWorker();
 });
+
+
+
+
+
+
+
 
 

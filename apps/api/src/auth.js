@@ -1,4 +1,4 @@
-﻿import {
+import {
   randomBytes,
   scryptSync,
   timingSafeEqual
@@ -17,9 +17,7 @@ const accountDefinitions = [
 const accounts = new Map();
 
 for (const account of accountDefinitions) {
-  if (!account.email || !account.password) {
-    throw new Error(`Missing ${account.role} login configuration in .env`);
-  }
+  if (!account.email || !account.password) continue;
 
   const salt = randomBytes(16);
   const passwordHash = scryptSync(account.password, salt, 64);

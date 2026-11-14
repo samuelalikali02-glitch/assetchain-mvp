@@ -1,5 +1,13 @@
+import OrganisationManagement from "./OrganisationManagement";
+import OrganisationVerification from "./OrganisationVerification";
+import OrganisationVerificationHistory from "./OrganisationVerificationHistory";
+import PlatformOrganisationReview from "./PlatformOrganisationReview";
 import React,{useEffect,useState} from "react";
+import UserRoleManagement from "./UserRoleManagement.jsx";
+import InspectorDashboard from "./InspectorDashboard.jsx";
+import InspectionReportReview from "./InspectionReportReview.jsx";
 import { createClient } from "@supabase/supabase-js";
+import LegalInformation from "./LegalInformation.jsx";
 const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
 
 
@@ -71,11 +79,26 @@ function App(){
  const [assets,setAssets]=useState([]);
  const [selected,setSelected]=useState(null);
  const [page,setPage]=useState("Overview");
+ const [mobileNavOpen,setMobileNavOpen]=useState(false);
+
+ useEffect(()=>{
+  if(!mobileNavOpen)return;
+  const closeOnEscape=event=>{
+   if(event.key==="Escape")setMobileNavOpen(false);
+  };
+  window.addEventListener("keydown",closeOnEscape);
+  return ()=>window.removeEventListener("keydown",closeOnEscape);
+ },[mobileNavOpen]);
  const [form,setForm]=useState({name:"",category:"Agriculture",location:"",description:"",organisationId:""});
  const [files,setFiles]=useState([]);
  const [readings,setReadings]=useState([]);
  const [busy,setBusy]=useState(false);
  const [notice,setNotice]=useState("");
+ useEffect(()=>{
+  if(!notice)return;
+  const timer=window.setTimeout(()=>setNotice(""),5000);
+  return ()=>window.clearTimeout(timer);
+ },[notice]);
  const [verify,setVerify]=useState("");
  const [verified,setVerified]=useState(null);
  const [blockchainEvents,setBlockchainEvents]=useState([]);
@@ -788,8 +811,8 @@ if(!orgSession){
            </div>
 
            <div className="ac-auth-intro-content">
-             <p className="ac-auth-kicker">ASSET MANAGEMENT. BUILT ON TRUST.</p>
-             <h1>Know your assets. Verify their history.</h1>
+             <p className="ac-auth-kicker">ASSET INTELLIGENCE. EVIDENCE YOU CAN TRACE.</p>
+             <h1>Give every asset a digital identity you can verify.</h1>
              <p>
                A secure workspace for recording, tracking and verifying
                asset information with confidence.
@@ -844,7 +867,7 @@ if(!orgSession){
                      onClick={()=>setAccountType("personal")}
                      aria-pressed={accountType==="personal"}
                    >
-                     <span className="ac-account-icon" aria-hidden="true">â—Ž</span>
+                     <span className="ac-account-icon" aria-hidden="true">&#128100;</span>
                      <strong>Personal account</strong>
                      <span>Manage and track your personal asset records.</span>
                      <span className="ac-account-selected">
@@ -858,7 +881,7 @@ if(!orgSession){
                      onClick={()=>setAccountType("organisation")}
                      aria-pressed={accountType==="organisation"}
                    >
-                     <span className="ac-account-icon" aria-hidden="true">â–¦</span>
+                     <span className="ac-account-icon" aria-hidden="true">&#127970;</span>
                      <strong>Organisation account</strong>
                      <span>Create an account to set up or join an organisation workspace.</span>
                      <span className="ac-account-selected">
@@ -949,24 +972,51 @@ if(!orgSession){
    );
  } const card=(label,value,sub)=><div className="stat"><span>{label}</span><strong>{value}</strong><small>{sub}</small></div>;
  return <div className="shell">
-  <aside className="sidebar">
-   <div className="brand"><div className="brandmark">A</div><div>AssetChain<small>TRUST INFRASTRUCTURE</small></div></div>
+  {mobileNavOpen&&<button type="button" className="mobile-nav-backdrop" aria-label="Close navigation" onClick={()=>setMobileNavOpen(false)} />}
+  <aside className={mobileNavOpen?"sidebar mobile-open":"sidebar"} aria-label="Main navigation">
+   <div className="brand"><div className="brandmark">A</div><div>AssetChain<small>TRUST INFRASTRUCTURE</small></div><button type="button" className="mobile-sidebar-close" onClick={()=>setMobileNavOpen(false)} aria-label="Close navigation">&#215;</button></div>
    <div className="navlabel">WORKSPACE</div>
-   {["Overview","Asset register","Inspection centre","Verify passport","Organisation","Profile","Become an Inspector","Marketplace",...(["platform_owner","platform_admin"].includes(platformUser?.platformRole)?["Platform administration"]:[])].map(p=><button className={page===p?"nav active":"nav"} onClick={()=>setPage(p)} key={p}><span>{({Overview:" ","Asset register":" ","Inspection centre":" ","Verify passport":" ",Organisation:" "})[p]}</span>{p}</button>)}
+   {["Overview","Asset register","Inspection centre","Verify passport","Organisation","Profile","Become an Inspector","Marketplace","Legal & Privacy",...(["platform_owner","platform_admin"].includes(platformUser?.platformRole)?["Platform administration"]:[])].map(p=><button className={page===p?"nav active":"nav"} onClick={()=>{setPage(p);setMobileNavOpen(false);}} key={p}><span>{({Overview:" ","Asset register":" ","Inspection centre":" ","Verify passport":" ",Organisation:" "})[p]}</span>{p}</button>)}
    <div className="sidebottom"><div className="live-dot"></div> API-connected demo <small>Hackathon prototype   Nigeria</small></div>
   </aside>
   <main className="main">
-   <header><div><span className="eyebrow">REAL-WORLD ASSET PASSPORTS</span><h1>{page}</h1></div><div className="header-right"><span className="status-pill">  DEMO ENVIRONMENT</span><div className="avatar">AC</div></div></header>
-   {notice&&<div className={`notice ${/failed|could not|not found|no matching|already anchored|enter a passport/i.test(notice)?"notice-error":"notice-success"}`} role={/failed|could not|not found|no matching|already anchored|enter a passport/i.test(notice)?"alert":"status"} aria-live="polite">{notice}</div>}
+   <header><button type="button" className="mobile-menu-toggle" onClick={()=>setMobileNavOpen(true)} aria-label="Open navigation" aria-expanded={mobileNavOpen}>&#9776;</button><div><span className="eyebrow">ASSET INTELLIGENCE & EVIDENCE</span><h1>{page}</h1>
+<p className="page-description">{({
+  "Overview": "Your central view of assets, inspections and evidence activity.",
+  "Asset register": "Create and maintain digital passports for real-world assets.",
+  "Inspection centre": "Coordinate field inspections and review submitted reports.",
+  "Verify passport": "Look up an asset passport and examine its available verification records.",
+  "Organisation": "Manage your organisation, members and verification status.",
+  "Profile": "Manage your personal information, security and account preferences.",
+  "Become an Inspector": "Apply to join the inspection network and track your application.",
+  "Marketplace": "Discover published asset listings and manage your own listings.",
+  "Legal & Privacy": "Review how AssetChain handles your information, records and account privacy.",
+  "Platform administration": "Review platform activity, organisation requests and inspector applications.",
+  "Asset passport": "Examine an asset's details, supporting evidence and verification history."
+})[page] || "Manage your assets and supporting records on AssetChain."}</p>
+<p className="page-description">{({
+  "Overview": "Your central view of assets, inspections and evidence activity.",
+  "Asset register": "Create and maintain digital passports for real-world assets.",
+  "Inspection centre": "Coordinate field inspections and review submitted reports.",
+  "Verify passport": "Look up an asset passport and examine its available verification records.",
+  "Organisation": "Manage your organisation, members and verification status.",
+  "Profile": "Manage your personal information, security and account preferences.",
+  "Become an Inspector": "Apply to join the inspection network and track your application.",
+  "Marketplace": "Discover published asset listings and manage your own listings.",
+  "Legal & Privacy": "Review how AssetChain handles your information, records and account privacy.",
+  "Platform administration": "Review platform activity, organisation requests and inspector applications.",
+  "Asset passport": "Examine an asset's details, supporting evidence and verification history."
+})[page] || "Manage your assets and supporting records on AssetChain."}</p></div><div className="header-right"><span className="status-pill">  DEMO ENVIRONMENT</span><div className="avatar">AC</div></div></header>
+   {notice&&<div className={`notice-toast ${/failed|could not|not found|no matching|already anchored|enter a passport/i.test(notice)?"notice-error":"notice-success"}`} role={/failed|could not|not found|no matching|already anchored|enter a passport/i.test(notice)?"alert":"status"} aria-live="polite">{notice}<button type="button" className="notice-toast-close" aria-label="Dismiss notification" onClick={()=>setNotice("")}>×</button></div>}
    {page==="Overview"&&<section>
-    <div className="hero"><div><span className="eyebrow light">AFRICAN ASSET TRUST NETWORK</span><h2>Every asset has a story.<br/>Make its evidence verifiable.</h2><p>Digital passports, inspection workflows and tamper-evident evidence for real-world assets.</p><button className="primary lightbtn" onClick={()=>setPage("Asset register")}>  Register an asset</button></div><div className="hero-symbol">A<span> </span></div></div>
+    <div className="hero"><div><span className="eyebrow light">YOUR ASSETCHAIN WORKSPACE</span><h2>Every asset has a story.<br/>Make its records easier to verify.</h2><p>Create digital asset passports, coordinate inspections and preserve tamper-evident evidence.</p><button className="primary lightbtn" onClick={()=>setPage("Asset register")}>  Register an asset</button></div><div className="hero-symbol">A<span> </span></div></div>
     <div className="stats">{card("REGISTERED ASSETS",assets.length,"Across all categories")}{card("INSPECTION REQUESTS",assets.filter(a=>a.status!=="Inspection report generated").length,"Awaiting completion")}{card("REPORTS GENERATED",assets.filter(a=>a.inspection).length,"Demonstration reports")}{card("EVIDENCE FILES",assets.reduce((n,a)=>n+a.documents.length,0),"Fingerprints calculated")}</div>
-    <div className="sectionhead"><div><h3>Recent asset passports</h3><p>Assets registered in this workspace</p></div><button className="textbtn" onClick={()=>setPage("Asset register")}>View register  </button></div>
+    <div className="sectionhead"><div><h3>Recently registered assets</h3><p>Assets registered in this workspace</p></div><button className="textbtn" onClick={()=>setPage("Asset register")}>View register  </button></div>
     <AssetList assets={assets} open={a=>{setSelected(a);setPage("Asset passport")}}/>
-    <div className="callout"><strong>What makes AssetChain different?</strong><p>Three evidence layers work together: applicant documents, sensor observations and field inspector findings. Simulated readings are explicitly labelled and never represented as physical measurements.</p></div>
+    <div className="callout"><strong>A clearer picture of every asset</strong><p>Three evidence layers work together: applicant documents, sensor observations and field inspector findings. Simulated readings are explicitly labelled and never represented as physical measurements.</p></div>
    </section>}
    {page==="Asset register"&&<section className="columns">
-    <div className="panel"><h3>Register a real-world asset</h3><p className="muted">Create a digital identity and submit supporting evidence.</p>
+    <div className="panel"><h3>Create an asset passport</h3><p className="muted">Establish an asset record and attach the documents that support it.</p>
      <form onSubmit={register} className="form">
       <label>Asset name<input required placeholder="e.g. Massey Ferguson 375 tractor" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label>
       <label>Asset category<select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{categories.map(c=><option key={c}>{c}</option>)}</select></label>
@@ -1028,7 +1078,22 @@ if(!orgSession){
     </div>
     <div className="panel soft"><span className="eyebrow">REGISTRATION FLOW</span><h3>From claim to evidence</h3><div className="steps"><p><b>01</b> Asset identity created</p><p><b>02</b> Supporting documents fingerprinted</p><p><b>03</b> Inspection request opened</p><p><b>04</b> Inspector assigned</p><p><b>05</b> Findings recorded and report hashed</p></div><div className="caution">Registration does not establish legal ownership or title.</div></div>
    </section>}
-   {page==="Inspection centre"&&<section><div className="sectionhead"><div><h3>Field inspection queue</h3><p>Assign an inspector and capture inspection findings.</p></div></div><AssetList assets={assets} open={a=>{setSelected(a);setPage("Asset passport")}}/></section>}
+{page==="Inspection centre"&&(
+  platformUser?.platformRole==="platform_inspector"
+    ? <InspectorDashboard apiFetch={apiFetch} apiBase={API}/>
+    : <section>
+        <div className="sectionhead">
+          <div>
+            <h3>Inspection workspace</h3>
+            <p>View registered assets and inspection operations.</p>
+          </div>
+        </div>
+        <AssetList
+          assets={assets}
+          open={a=>{setSelected(a);setPage("Asset passport")}}
+        />
+      </section>
+)}
    {page==="Asset passport"&&selected&&<section>
     <button className="textbtn back" onClick={()=>setPage("Overview")}>  Back to overview</button>
     <div className="passport-head"><div><span className="eyebrow">DIGITAL ASSET PASSPORT</span><h2>{selected.name}</h2><p>{selected.passportId}   {selected.category}   {selected.location}</p></div><span className="status-pill">{selected.status}</span></div>
@@ -1080,7 +1145,7 @@ if(!orgSession){
    {page==="Asset passport"&&!selected&&<div className="empty">Choose an asset from Overview or the Inspection centre.</div>}
    {page==="Organisation"&&<section>
     <div className="sectionhead">
-     <div><h3>Organisation workspace</h3><p>Manage an organisation alongside your individual AssetChain account.</p></div>
+     <div><h3>Organisation hub</h3><p>Manage an organisation alongside your individual AssetChain account.</p></div>
     </div>
 
     {!orgSession&&<div className="panel" style={{maxWidth:"560px"}}>
@@ -1103,6 +1168,10 @@ if(!orgSession){
     </div>}
 
     {orgSession&&<>
+     <OrganisationManagement orgs={orgs} apiBase={API} token={orgSession.access_token} onNotice={setNotice} />
+     <OrganisationVerification orgs={orgs} apiBase={API} token={orgSession.access_token} onNotice={setNotice} />
+     <OrganisationVerificationHistory orgs={orgs} apiBase={API} token={orgSession.access_token} />
+     <PlatformOrganisationReview apiBase={API} token={orgSession.access_token} onNotice={setNotice} />
      <div className="panel" style={{marginBottom:"20px"}}>
       <div className="sectionhead">
        <div><span className="eyebrow">SIGNED IN</span><h3>{orgSession.user.email}</h3><p className="muted">Individual account with optional organisation memberships.</p></div>
@@ -1152,16 +1221,52 @@ if(!orgSession){
       <div className="panel soft">
        <span className="eyebrow">YOUR ORGANISATIONS</span>
        <h3>Organisation dashboard</h3>
-       {orgs.length===0?<p className="muted">No active organisation memberships yet. Create your first organisation to get started.</p>:
-        orgs.map(item=><div className="report" key={item.id}>
-         <b>{item.organisation?.display_name||item.organisation?.legal_name}</b>
-         <p>{item.organisation?.organisation_type}   {item.organisation?.country}</p>
-         <p>Membership: <strong>{item.role}</strong></p>
-         <p>Verification: <strong>{item.organisation?.verification_status}</strong></p>
-         <small>{item.organisation?.legal_name}</small>
-        </div>)
-       }
-       <div className="caution">Organisation verification is pending until reviewed. Creating an organisation does not certify its legal status or verify its assets.</div>
+       {orgs.length === 0 ? (
+        <p className="muted">No active organisation memberships yet. Create your first organisation to get started.</p>
+       ) : (
+        <div className="org-dashboard-list">
+         {orgs.map(item => {
+          const organisation = item.organisation || {};
+          const verification = organisation.verification_status || "Not available";
+
+          return (
+           <div className="org-dashboard-card" key={item.id}>
+            <div className="org-dashboard-heading">
+             <div>
+              <span className="org-card-label">ORGANISATION</span>
+              <h4>{organisation.display_name || organisation.legal_name || "Organisation"}</h4>
+              <p className="org-card-subtitle">
+               {[organisation.organisation_type, organisation.country].filter(Boolean).join(" · ") || "Details not available"}
+              </p>
+             </div>
+             <span className={"org-status " + (verification.toLowerCase() === "verified" ? "is-verified" : "is-pending")}>
+              {verification.replace(/_/g, " ")}
+             </span>
+            </div>
+
+            <div className="org-dashboard-details">
+             <div className="org-detail">
+              <span>MEMBERSHIP ROLE</span>
+              <strong>{item.role || "Member"}</strong>
+             </div>
+             <div className="org-detail">
+              <span>VERIFICATION</span>
+              <strong>{verification.replace(/_/g, " ")}</strong>
+             </div>
+             <div className="org-detail org-detail-full">
+              <span>LEGAL NAME</span>
+              <strong>{organisation.legal_name || "Not provided"}</strong>
+             </div>
+            </div>
+           </div>
+          );
+         })}
+        </div>
+       )}       <div className="caution">
+  {orgs.some(item => item.organisation?.verification_status === "pending") &&
+    "Organisation verification is awaiting review."}
+  {" "}Creating an organisation does not certify its legal status or verify its assets.
+</div>
       </div>
      </div>
     </>}
@@ -1170,7 +1275,7 @@ if(!orgSession){
     <div className="hero">
      <div>
       <span className="eyebrow light">YOUR ASSETCHAIN IDENTITY</span>
-      <h2>Manage your account.<br/>Build your trust profile.</h2>
+      <h2>Your account. Your workspace.<br/>Manage your AssetChain profile.</h2>
       <p>Keep your personal details, security and organisation memberships up to date.</p>
      </div>
      <div className="hero-symbol">A<span> </span></div>
@@ -1410,12 +1515,24 @@ if(!orgSession){
    </div>)}
   {inspectorApplications.length===0&&<p className="muted">No inspector applications have been submitted yet.</p>}
   {platformUser?.platformRole!=="platform_owner"&&<p className="muted">Platform admins can review applications, but only the platform owner can appoint inspectors.</p>}
- </div></section>}
+  </div>
+   <InspectionReportReview
+   apiFetch={apiFetch}
+   apiBase={API}
+   setNotice={setNotice}
+  />
+<UserRoleManagement
+  apiFetch={apiFetch}
+  apiBase={API}
+  platformUser={platformUser}
+  setNotice={setNotice}
+ />
+</section>}
 {page==="Marketplace"&&<section>
     <div className="hero">
      <div>
       <span className="eyebrow light">ASSET DISCOVERY NETWORK</span>
-      <h2>Discover assets.<br/>Trade with better evidence.</h2>
+      <h2>Explore asset opportunities.<br/>Make informed decisions with clearer records.</h2>
       <p>Explore asset passports published by individuals and organisations. Review available evidence before making an offer.</p>
      </div>
      <div className="hero-symbol">A<span>?</span></div>
@@ -1430,7 +1547,7 @@ if(!orgSession){
 
     <div className="panel">
      <span className="eyebrow">PUBLISH AN ASSET</span>
-     <h3>Create a marketplace listing</h3>
+     <h3>Publish an asset listing</h3>
      <p className="muted">Only assets registered in the marketplace database can be published. Your account or organisation permissions are checked by the server.</p>
      <form className="form" onSubmit={publishListing}>
       <label>Asset passport
@@ -1509,7 +1626,7 @@ if(!orgSession){
     </div>
 
     <div className="sectionhead">
-     <div><h3>Explore published assets</h3><p>Listings submitted by individual and organisation account holders.</p></div>
+     <div><h3>Explore marketplace listings</h3><p>Listings submitted by individual and organisation account holders.</p></div>
      <button className="textbtn" onClick={()=>loadMarketplace().catch(e=>setNotice(e.message))}>Refresh listings</button>
     </div>
 
@@ -1560,6 +1677,7 @@ if(!orgSession){
     </div>
    </section>}
    {page==="Verify passport"&&<section className="panel verify"><span className="eyebrow">PUBLIC VERIFICATION</span><h2>Verify an asset passport</h2><p className="muted">Enter the passport ID to inspect its recorded identity and evidence fingerprints.</p><form onSubmit={verifyPassport}><input placeholder="e.g. AC-..." value={verify} onChange={e=>setVerify(e.target.value)} required/><button className="primary">Verify passport</button></form>{verified&&<div className="report"><b>{verified===false?"No matching passport found":"Passport record found"}</b>{verified!==false&&<><p>{verified.name}   {verified.category}</p><p>{verified.passportId}   {verified.location}</p><code>{verified.recordHash}</code><p className="muted">This confirms a matching record in this running demo API, not legal title or an on-chain transaction.</p></>}</div>}</section>}
+   {page==="Legal & Privacy"&&<LegalInformation />}
    <footer>ASSETCHAIN   Verifiable Real-World Asset Passports <span>Hackathon demonstration   Simulated data is labelled</span></footer>
   </main>
  </div>
@@ -1569,6 +1687,18 @@ function AssetList({assets,open}){
  return <div className="assetlist">{assets.map(a=><button className="assetrow" key={a.id} onClick={()=>open(a)}><span className="asseticon">{a.category==="Vehicle"?" ":a.category==="Real estate"?" ":" "}</span><span className="assetinfo"><b>{a.name}</b><small>{a.passportId}   {a.location}</small></span><span className="assetstatus">{a.status}</span><span> </span></button>)}</div>
 }
 export default App;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
